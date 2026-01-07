@@ -1,11 +1,14 @@
 import express from "express"
-import { UserModel } from "./db"
+import { ContentModel, LinkModel, UserModel } from "./db"
 import mongoose from "mongoose"
 import z from "zod"
 import bcrypt from "bcrypt"
 import cors from "cors"
 import jwt from "jsonwebtoken"
 import dotenv from "dotenv"
+import { userMiddleware } from "./Middleware"
+import { random } from "./utils"
+dotenv.config()
 
 const JWT_SECRET = process.env.JWT_PASSWORD;
 
@@ -101,6 +104,118 @@ app.post("/api/v1/signin", async (req, res) => {
   const token = jwt.sign({ id: existingUser._id }, JWT_SECRET);
 
   return res.json({ token });
+});
+
+app.post("/api/v1/content", userMiddleware, async (req, res) => {
+  const link = req.body.link;
+  const title = req.body.title;
+  const type = req.body.type;
+
+  await ContentModel.create({
+    link,
+    title,
+    type,
+    userId: new mongoose.Types.ObjectId(req.userId),
+    tags: [],
+  });
+  return res.json({
+    message: "Content is added",
+  });
+});
+
+app.get("/api/v1/content", userMiddleware, async (req, res) => {
+  const content = await ContentModel.find({
+    userId: new mongoose.Types.ObjectId(req.userId),
+  }).populate("userId", "username");
+  res.json({
+    content,
+  });
+});
+
+app.delete("/api/v1/content", userMiddleware, async (req, res) => {
+  const contentId = req.body.contentId;
+
+  try {
+    await ContentModel.deleteOne({
+      _id: new mongoose.Types.ObjectId(contentId as string),
+      userId: new mongoose.Types.ObjectId(req.userId),
+    });
+
+    res.json({
+      message: "Content Deleted Successfully",
+    });
+  } catch (error) {
+    res.status(400).json({
+      error: "Failed to delete content",
+    });
+  }
+});
+
+app.post("/api/v1/brain/share", userMiddleware, async (req, res) => {
+  const share = req.body.share;
+  if (share) {
+    const existingLink = await LinkModel.findOne({
+      userId: new mongoose.Types.ObjectId(req.userId),
+    });
+
+    if (existingLink) {
+      res.json({
+        hash: existingLink.hash,
+      });
+      return;
+    }
+    const hash = random(10);
+    await LinkModel.create({
+      userId: new mongoose.Types.ObjectId(req.userId),
+      hash: hash,
+    });
+    res.json({
+      message: "/share/" + hash,
+    });
+  } else {
+    await LinkModel.deleteOne({
+      userId: new mongoose.Types.ObjectId(req.userId),
+    });
+
+    res.json({
+      message: "Removed link",
+    });
+  }
+});
+
+app.get("/api/v1/brain/:shareLink", async (req, res) => {
+    const hash = req.params.shareLink;
+
+    const link = await LinkModel.findOne({
+        hash
+    });
+
+    if (!link) {
+        res.status(411).json({
+            message: "Sorry incorrect input"
+        })
+        return;
+    }
+    // userId
+    const content = await ContentModel.find({
+        userId: link.userId
+    })
+
+    const user = await UserModel.findOne({
+        _id: link.userId
+    })
+
+    if (!user) {
+        res.status(411).json({
+            message: "user not found, error should ideally not happen"
+        })
+        return;
+    }
+
+    res.json({
+        username: user.username,
+        content: content
+    })
 });
 
 app.listen(3000)
